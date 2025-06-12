@@ -1,0 +1,164 @@
+(ns structmap.loader
+  (:import [System.Runtime.Loader AssemblyLoadContext]
+           [System.IO Directory Path])
+  (:require [clojure.clr.shell :as shell]
+            [clojure.string :as string]))
+
+(def macos? (OperatingSystem/IsMacOS))
+(def windows? (OperatingSystem/IsWindows))
+(def linux? (OperatingSystem/IsLinux))
+
+(def pwd (Directory/GetCurrentDirectory))
+
+(def home (Environment/GetFolderPath Environment+SpecialFolder/UserProfile))
+
+(defn- trim-brackets [s]
+  (subs s 1 (dec (count s))))
+
+(def sdks
+  (let [{:keys [exit out err]} (shell/sh "dotnet" "--list-sdks")]
+    (if-not (zero? exit)
+            (throw (new Exception out))
+            (reduce
+             #(let [[_ k v] (re-matches #"(.*) (.*)" %2)]
+               (assoc %1 k (string/join Path/DirectorySeparatorChar [(trim-brackets v) k])))
+             {}
+             (string/split-lines out)))))
+
+(defn shared-prefix-length [a b]
+  (count
+   (take-while true?
+               (map = a b))))
+
+(def runtime-version (str Environment/Version))
+
+;(def framework (format "net%.1f" (float (.-Major Environment/Version))))
+
+(def best-match-sdk-version
+  (->> sdks
+       keys
+       (sort-by (partial shared-prefix-length runtime-version))
+       first))
+
+(def sdk-path (get sdks best-match-sdk-version))
+
+(def nuget
+  (->> (string/join Path/DirectorySeparatorChar [home ".nuget"])
+       (new System.IO.DirectoryInfo)
+       file-seq
+       (filter (partial instance? System.IO.FileInfo))
+       (sort-by #(.FullName %)) ;; bug: naive sort puts 1.10 before 1.9 which is incorrect
+       ;; and one day changing net8.0 to net10.0 may also break stuff
+       (map (juxt #(.Name %) #(.FullName %)))
+       (into {})))
+
+(defn guess-path
+  "Guess the path in either ~/.nuget or /usr/lib/dotnet preferring the latest
+   version by virtue of the sorting in the nuget listing. Not great but works."
+  [dll]
+  {:pre [(string/ends-with? dll ".dll")]}
+  (if (string/starts-with? dll "Microsoft.Extensions.Logging")
+    (string/join Path/DirectorySeparatorChar [sdk-path dll])
+    (get nuget dll)))
+
+(defn assembly-load-file [dll]
+  (let [alc AssemblyLoadContext/Default]
+    (.LoadFromAssemblyPath alc dll)))
+
+
+
+
+;;;;;;;;;;;;;;;;;;
+
+(comment
+
+(assembly-load-file' (guess-path "AWSSDK.Core.dll"))
+(assembly-load-file' (guess-path "AWSSDK.SecurityToken.dll"))
+(assembly-load-file' (guess-path "AWSSDK.S3.dll"))
+
+;(user/assembly-load-file' (user/guess-path "Npgsql.NetTopologySuite.dll"))
+(user/assembly-load-file' (user/guess-path "Microsoft.Extensions.Logging.dll"))
+(user/assembly-load-file'
+ (user/guess-path "Microsoft.Extensions.Logging.Abstractions.dll"))
+(user/assembly-load-file'
+ (user/guess-path "Microsoft.Extensions.Logging.Console.dll"))
+
+(user/assembly-load-file' (user/guess-path "NetTopologySuite.dll"))
+(user/assembly-load-file' (user/guess-path "Npgsql.dll"))
+
+
+    (assembly-load-file (guess-path "clojure.tools.analyzer.clr.dll"))
+    (assembly-load-file (guess-path "clojure.tools.analyzer.dll"))
+    (assembly-load-file (guess-path "clojure.core.async.dll"))
+    (assembly-load-file (guess-path "clojure.core.memoize.dll"))
+    (assembly-load-file (guess-path "clojure.core.cache.dll"))
+    (assembly-load-file (guess-path "clojure.data.priority-map.dll"))
+
+(assembly-load "System.Collections")
+(assembly-load "System.Collections.Concurrent")
+
+;;;;;;;;;;; tmp
+
+
+(def setup
+  (do
+    (let [{:keys [exit out err]} (shell/sh "dotnet" "restore")]
+      (when-not (zero? exit)
+                (println out)
+                (Environment/Exit exit)))
+
+    ;; TODO: enumerate csproj XML instead of this hard-coded list
+
+    (assembly-load-file (guess-path "clojure.tools.analyzer.clr.dll"))
+    (assembly-load-file (guess-path "clojure.tools.analyzer.dll"))
+    (assembly-load-file (guess-path "clojure.core.async.dll"))
+    (assembly-load-file (guess-path "clojure.core.memoize.dll"))
+    (assembly-load-file (guess-path "clojure.core.cache.dll"))
+    (assembly-load-file (guess-path "clojure.data.priority-map.dll"))
+
+    (assembly-load-file (guess-path "NetTopologySuite.dll"))
+
+    ; used by AWS SDK, available from Nuget or from dotnet SDK
+    (assembly-load-file'
+     (guess-path "System.Configuration.ConfigurationManager.dll"))
+
+    ; these don't work with clojure cli, only "dotnet run"
+    ;(assembly-load-file' (guess-path "IKVM.Runtime.dll"))
+    ;(assembly-load-file' (guess-path "IKVM.Java.dll"))
+
+    (assembly-load-file' (guess-path "AWSSDK.Core.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.SSO.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.SSOOIDC.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.SecurityToken.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.SecretsManager.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.SQS.dll"))
+    (assembly-load-file' (guess-path "AWSSDK.S3.dll"))
+    (assembly-load-file (guess-path "Hjg.Pngcs.dll"))
+    (assembly-load-file' (guess-path "Microsoft.Extensions.Logging.dll"))
+    (assembly-load-file' (guess-path "Microsoft.Extensions.Logging.Console.dll"))
+
+    (if (Path/Exists "/home/james.davidson/.nuget/packages/microsoft.extensions.objectpool/8.0.1/lib/net8.0/Microsoft.Extensions.ObjectPool.dll")
+        (assembly-load-file' "/home/james.davidson/.nuget/packages/microsoft.extensions.objectpool/8.0.1/lib/net8.0/Microsoft.Extensions.ObjectPool.dll")
+        (assembly-load-file' (guess-path "Microsoft.Extensions.ObjectPool.dll")))
+
+    (let [cdjson (guess-path "clojure.data.json.dll")]
+      (when (Path/Exists cdjson) (assembly-load-file' cdjson)))
+
+    ;(assembly-load-file "/usr/lib/dotnet/shared/Microsoft.AspNetCore.App/8.0.10/Microsoft.Extensions.Hosting.Abstractions.dll")
+
+    (assembly-load-file' (guess-path "Prometheus.NetStandard.dll"))
+    (assembly-load-file' (guess-path "Prometheus.SystemMetrics.dll"))
+    (assembly-load-file' (guess-path "prometheus-net.DotNetRuntime.dll"))
+    ;(assembly-load-file' (guess-path "Prometheus.AspNetCore.dll"))
+
+    (assembly-load "System.Net.Http") ;; reference assembly, unsure what that means
+    (assembly-load "System.Collections")
+    (assembly-load "System.Collections.Concurrent")
+    (assembly-load "System.Reflection")
+    (assembly-load "System.Reflection.Emit")
+    (assembly-load "System.Runtime.InteropServices")
+    :done))
+
+)
+
+nil
