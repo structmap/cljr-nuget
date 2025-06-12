@@ -65,7 +65,8 @@
   (let [alc AssemblyLoadContext/Default]
     (.LoadFromAssemblyPath alc dll)))
 
-
+(defn assembly-load [x]
+ (some-> x (str ".dll") guess-path assembly-load-file))
 
 
 ;;;;;;;;;;;;;;;;;;
