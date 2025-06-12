@@ -1,5 +1,6 @@
 (ns structmap.loader
-  (:import [System.Runtime.Loader AssemblyLoadContext]
+  (:import [System Environment Environment+SpecialFolder]
+           [System.Runtime.Loader AssemblyLoadContext]
            [System.IO Directory Path])
   (:require [clojure.clr.shell :as shell]
             [clojure.string :as string]))
