@@ -1,0 +1,35 @@
+(ns structmap.nuget
+  (:import [System Environment Environment+SpecialFolder]
+           [System.Runtime.Loader AssemblyLoadContext]
+           [System.IO Directory Path])
+  (:require [clojure.string :as string]))
+
+(def macos? (OperatingSystem/IsMacOS))
+(def windows? (OperatingSystem/IsWindows))
+(def linux? (OperatingSystem/IsLinux))
+
+(def pwd (Directory/GetCurrentDirectory))
+
+(def home (Environment/GetFolderPath Environment+SpecialFolder/UserProfile))
+
+(def nuget
+  (->> (string/join Path/DirectorySeparatorChar [home ".nuget"])
+       (new System.IO.DirectoryInfo)
+       file-seq
+       (filter (partial instance? System.IO.FileInfo))
+       (sort-by #(.FullName %)) ;; bug: naive sort puts 1.10 before 1.9 which is incorrect and one day changing net8.0 to net10.0 may also break stuff
+       (map (juxt #(.Name %) #(.FullName %)))
+       (into {})))
+
+(defn default-load-file
+  "Like assembly-load-file but for default AssemblyLoadContext."
+  [dll]
+  (let [alc AssemblyLoadContext/Default]
+    (.LoadFromAssemblyPath alc dll)))
+
+(defn default-load
+  "Like assembly-load but for default AssemblyLoadContext."
+  [x]
+  (some-> x (str ".dll") nuget assembly-load-file))
+
+nil
