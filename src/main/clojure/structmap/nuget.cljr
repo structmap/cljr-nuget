@@ -1,5 +1,6 @@
 (ns structmap.nuget
   (:import [System Environment Environment+SpecialFolder]
+           [System.Globalization CompareOptions CultureInfo]
            [System.Runtime.Loader AssemblyLoadContext]
            [System.IO Directory Path])
   (:require [clojure.string :as string]))
@@ -12,12 +13,22 @@
 
 (def home (Environment/GetFolderPath Environment+SpecialFolder/UserProfile))
 
+(def cmp
+  (StringComparer/Create CultureInfo/InvariantCulture CompareOptions/NumericOrdering))
+
 (def nuget
   (->> (string/join Path/DirectorySeparatorChar [home ".nuget"])
        (new System.IO.DirectoryInfo)
        file-seq
        (filter (partial instance? System.IO.FileInfo))
-       (sort-by #(.FullName %)) ;; bug: naive sort puts 1.10 before 1.9 which is incorrect and one day changing net8.0 to net10.0 may also break stuff
+       (filter #(string/ends-with? (.Name %) ".dll"))
+       (group-by #(cond (string/includes? (.FullName %) "net462") :net462
+                        (string/includes? (.FullName %) "net481") :net481
+                        (string/includes? (.FullName %) "netcoreapp") :netcoreapp
+                        (string/includes? (.FullName %) "netstandard") :netstandard
+                        :default :net))
+       ((juxt :net462 :net481 :netcoreapp :netstandard :net))
+       (mapcat (fn [dlls] (sort-by #(.FullName %) (fn [x y] (.Compare cmp x y)) dlls)))
        (map (juxt #(.Name %) #(.FullName %)))
        (into {})))
 
