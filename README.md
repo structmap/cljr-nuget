@@ -5,7 +5,7 @@ ClojureCLR utility for adding NuGet-hosted libraries to the AssemblyLoadContext 
 ## usage
 
 ```
-cljr -Sdeps '{:deps {io.github.structmap/cljr-nuget {:git/tag "v0.0.2"  :git/sha "57f9829"}}}'
+cljr -Sdeps '{:deps {io.github.structmap/cljr-nuget {:git/tag "v0.0.3"  :git/sha "ffad286"}}}'
 (require '[structmap.nuget :as nuget])
 (nuget/default-load "AWSSDK.Core")
 (nuget/default-load "AWSSDK.S3")
